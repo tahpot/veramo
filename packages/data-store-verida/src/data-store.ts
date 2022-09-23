@@ -55,6 +55,8 @@ export interface IDataStoreAdapter {
 
   get(id: string): Promise<object>
 
+  delete(id: string): Promise<boolean>
+
   getMany(args: FindArgs<PossibleColumns>): Promise<object[]>
 
 }
@@ -82,7 +84,11 @@ export class VeridaDataStoreAdapter implements IDataStoreAdapter {
     return this.database.get(id)
   }
 
-  public async getMany<T extends Partial<Record<PossibleColumns, any>>>(args: FindArgs<T>): Promise<T[]> {
+  public async delete(id: string): Promise<boolean> {
+    return this.database.delete(id)
+  }
+
+  public async getMany(args: FindArgs<PossibleColumns>): Promise<object[]> {
     throw new Error('getMany() not implemented')
   }
 
@@ -144,7 +150,7 @@ export class MockAgent {
  *
  * @beta This API may change without a BREAKING CHANGE notice.
  */
-export class DataStoreJson implements IAgentPlugin {
+export class DataStore implements IAgentPlugin {
   readonly methods: IDataStore & IDataStoreORM
   readonly schema = { ...schema.IDataStore, ...schema.IDataStoreORM }
 

@@ -21,7 +21,7 @@ const debug = Debug('veramo:data-store-json:private-key-store')
  *
  * @beta This API may change without a BREAKING CHANGE notice.
  */
-export class PrivateKeyStoreJson extends AbstractPrivateKeyStore {
+export class PrivateKeyStore extends AbstractPrivateKeyStore {
   private readonly cacheTree: Required<Pick<VeramoJsonCache, 'privateKeys'>>
   private readonly notifyUpdate: DiffCallback
 

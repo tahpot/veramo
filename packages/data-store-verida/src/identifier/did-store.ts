@@ -1,9 +1,10 @@
-import { IIdentifier } from '@veramo/core'
+import { FindArgs, IIdentifier, TIdentifiersColumns } from '@veramo/core'
 import { AbstractDIDStore } from '@veramo/did-manager'
 
 import Debug from 'debug'
 import { DiffCallback, VeramoJsonCache, VeramoJsonStore } from '../types'
 import { serialize, deserialize } from '@ungap/structured-clone'
+import { MockAgent } from '../data-store'
 
 const debug = Debug('veramo:data-store-json:did-store')
 
@@ -21,20 +22,12 @@ const debug = Debug('veramo:data-store-json:did-store')
  *
  * @beta This API may change without a BREAKING CHANGE notice.
  */
-export class DIDStoreJson extends AbstractDIDStore {
-  private readonly cacheTree: Required<Pick<VeramoJsonCache, 'dids' | 'keys'>>
-  private readonly notifyUpdate: DiffCallback
+export class DIDStore extends AbstractDIDStore {
+  private agent: MockAgent
 
-  constructor(jsonStore: VeramoJsonStore) {
+  constructor(agent: MockAgent) {
     super()
-    this.notifyUpdate = jsonStore.notifyUpdate
-    this.cacheTree = jsonStore as Required<Pick<VeramoJsonCache, 'dids' | 'keys'>>
-    if (!this.cacheTree.dids) {
-      this.cacheTree.dids = {}
-    }
-    if (!this.cacheTree.keys) {
-      this.cacheTree.keys = {}
-    }
+    this.agent = agent
   }
 
   async get({
@@ -57,12 +50,31 @@ export class DIDStoreJson extends AbstractDIDStore {
     }
 
     let identifier: IIdentifier | undefined
+    const identifiers = await this.agent.getDataStoreAdapter('dids')
+
     if (where.did) {
-      identifier = this.cacheTree.dids[where.did]
+      identifier = <IIdentifier> await identifiers.get(where.did)
     } else {
-      identifier = Object.values(this.cacheTree.dids).find(
+      const query = <FindArgs<TIdentifiersColumns>> {
+        where: [{
+          column: 'provider',
+          value: [where.provider!]
+          op: 'Equal'
+        }, {
+          column: 'alias',
+          value: [where.alias!]
+          op: 'Equal'
+        }]
+      }
+
+      const results = <IIdentifier[]> await identifiers.getMany(query)
+      if (results && results.length) {
+        identifier = results[0]
+      }
+
+      /*identifier = Object.values(this.cacheTree.dids).find(
         (iid: IIdentifier) => iid.provider === where.provider && iid.alias === where.alias,
-      )
+      )*/
     }
 
     if (!identifier) throw Error('Identifier not found')
@@ -71,6 +83,10 @@ export class DIDStoreJson extends AbstractDIDStore {
   }
 
   async delete({ did }: { did: string }) {
+    const identifiers = await this.agent.getDataStoreAdapter('dids')
+    return await identifiers.delete(did)
+
+    /*
     if (this.cacheTree.dids[did]) {
       const oldTree = deserialize(serialize(this.cacheTree, { lossy: true }))
       delete this.cacheTree.dids[did]
@@ -78,10 +94,12 @@ export class DIDStoreJson extends AbstractDIDStore {
       await this.notifyUpdate(oldTree, this.cacheTree)
       return true
     }
-    return false
+    return false*/
   }
 
   async import(args: IIdentifier) {
+    throw new Error("Import not supported")
+    /*
     const oldTree = deserialize(serialize(this.cacheTree, { lossy: true }))
     this.cacheTree.dids[args.did] = args
     args.keys.forEach((key) => {
@@ -94,14 +112,45 @@ export class DIDStoreJson extends AbstractDIDStore {
 
     await this.notifyUpdate(oldTree, this.cacheTree)
     return true
+    */
   }
 
   async list(args: { alias?: string; provider?: string }): Promise<IIdentifier[]> {
+    /*
     const result = Object.values(this.cacheTree.dids).filter(
       (iid: IIdentifier) =>
         (!args.provider || (args.provider && iid.provider === args.provider)) &&
         (!args.alias || (args.alias && iid.alias === args.alias)),
     )
+    */
+
+    const where = []
+    if (args.alias) {
+      where.push({
+        column: 'alias',
+        value: [args.alias!],
+        op: 'Equal'
+      })
+    }
+
+    if (args.provider) {
+      where.push({
+        column: 'provider',
+        value: [args.provider!],
+        op: 'Equal'
+      })
+    }
+
+    const dids = await this.agent.getDataStoreAdapter('dids')
+    const results = <IIdentifier[]> await dids.getMany(<FindArgs<TIdentifiersColumns>> {
+      where
+    })
+
+    const result = results.reduce((result: any, item: IIdentifier) => {
+      result[item.did] = item
+      return result
+    }, {})
+
     return deserialize(serialize(result))
   }
 }

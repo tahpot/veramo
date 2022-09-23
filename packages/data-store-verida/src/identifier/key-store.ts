@@ -22,7 +22,7 @@ const debug = Debug('veramo:data-store-json:key-store')
  *
  * @beta This API may change without a BREAKING CHANGE notice.
  */
-export class KeyStoreJson extends AbstractKeyStore {
+export class KeyStore extends AbstractKeyStore {
   private readonly cacheTree: Required<Pick<VeramoJsonCache, 'keys'>>
   private readonly notifyUpdate: DiffCallback
 
