@@ -2,8 +2,8 @@ import { IKey, ManagedKeyInfo } from '@veramo/core'
 import { AbstractKeyStore } from '@veramo/key-manager'
 
 import Debug from 'debug'
-import { DiffCallback, VeramoJsonCache, VeramoJsonStore } from '../types'
 import { serialize, deserialize } from '@ungap/structured-clone'
+import { DbManager } from '../data-store'
 
 const debug = Debug('veramo:data-store-json:key-store')
 
@@ -23,51 +23,47 @@ const debug = Debug('veramo:data-store-json:key-store')
  * @beta This API may change without a BREAKING CHANGE notice.
  */
 export class KeyStore extends AbstractKeyStore {
-  private readonly cacheTree: Required<Pick<VeramoJsonCache, 'keys'>>
-  private readonly notifyUpdate: DiffCallback
+  private dbManager: DbManager
 
   /**
    * @param jsonStore - Serves as the JSON object storing data in memory as well as providing an update notification
    *   callback to persist this data. For correct usage, this MUST use the same {@link VeramoJsonStore} instance as the
    *   one used by {@link @veramo/did-manager#DIDManager | DIDManager}.
    */
-  constructor(jsonStore: VeramoJsonStore) {
+  constructor(dbManager: DbManager) {
     super()
-    this.notifyUpdate = jsonStore.notifyUpdate
-    this.cacheTree = jsonStore as Required<Pick<VeramoJsonCache, 'dids' | 'keys'>>
-    if (!this.cacheTree.keys) {
-      this.cacheTree.keys = {}
-    }
+    this.dbManager = dbManager
+  }
+
+  public async getDb() {
+    return await this.dbManager.getDataStoreAdapter('keys')
   }
 
   async get({ kid }: { kid: string }): Promise<IKey> {
-    if (this.cacheTree.keys[kid]) {
-      return deserialize(serialize(this.cacheTree.keys[kid]))
-    } else {
+    const db = await this.getDb()
+    const result = await db.get(kid)
+
+    if (!result) {
       throw Error('not_found: Key not found')
     }
+
+    return <IKey> result
   }
 
   async delete({ kid }: { kid: string }) {
-    if (this.cacheTree.keys[kid]) {
-      const oldTree = deserialize(serialize(this.cacheTree, { lossy: true }))
-      delete this.cacheTree.keys[kid]
-      await this.notifyUpdate(oldTree, this.cacheTree)
-      return true
-    } else {
-      return false
-    }
+    const db = await this.getDb()
+    return await db.delete(kid)
   }
 
-  async import(args: IKey) {
-    const oldTree = deserialize(serialize(this.cacheTree, { lossy: true }))
-    this.cacheTree.keys[args.kid] = args
-    await this.notifyUpdate(oldTree, this.cacheTree)
-    return true
+  async import(args: IKey): Promise<boolean> {
+    throw new Error('not_supported: Import not supported')
   }
 
   async list(args: {} = {}): Promise<ManagedKeyInfo[]> {
-    const keys = Object.values(this.cacheTree.keys).map((key: IKey) => {
+    const db = await this.getDb()
+    const dbKeys = <IKey[]> await db.getMany()
+
+    const keys = Object.values(dbKeys).map((key: IKey) => {
       const { kid, publicKeyHex, type, meta, kms } = key
       return { kid, publicKeyHex, type, meta: deserialize(serialize(meta)), kms } as ManagedKeyInfo
     })

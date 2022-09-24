@@ -2,9 +2,8 @@ import { FindArgs, IIdentifier, TIdentifiersColumns } from '@veramo/core'
 import { AbstractDIDStore } from '@veramo/did-manager'
 
 import Debug from 'debug'
-import { DiffCallback, VeramoJsonCache, VeramoJsonStore } from '../types'
 import { serialize, deserialize } from '@ungap/structured-clone'
-import { MockAgent } from '../data-store'
+import { DbManager } from '../data-store'
 
 const debug = Debug('veramo:data-store-json:did-store')
 
@@ -23,11 +22,15 @@ const debug = Debug('veramo:data-store-json:did-store')
  * @beta This API may change without a BREAKING CHANGE notice.
  */
 export class DIDStore extends AbstractDIDStore {
-  private agent: MockAgent
+  private dbManager: DbManager
 
-  constructor(agent: MockAgent) {
+  constructor(dbManager: DbManager) {
     super()
-    this.agent = agent
+    this.dbManager = dbManager
+  }
+
+  private async getDb() {
+    return await this.dbManager.getDataStoreAdapter('dids')
   }
 
   async get({
@@ -50,7 +53,7 @@ export class DIDStore extends AbstractDIDStore {
     }
 
     let identifier: IIdentifier | undefined
-    const identifiers = await this.agent.getDataStoreAdapter('dids')
+    const identifiers = await this.getDb()
 
     if (where.did) {
       identifier = <IIdentifier> await identifiers.get(where.did)
@@ -58,11 +61,11 @@ export class DIDStore extends AbstractDIDStore {
       const query = <FindArgs<TIdentifiersColumns>> {
         where: [{
           column: 'provider',
-          value: [where.provider!]
+          value: [where.provider!],
           op: 'Equal'
         }, {
           column: 'alias',
-          value: [where.alias!]
+          value: [where.alias!],
           op: 'Equal'
         }]
       }
@@ -83,7 +86,7 @@ export class DIDStore extends AbstractDIDStore {
   }
 
   async delete({ did }: { did: string }) {
-    const identifiers = await this.agent.getDataStoreAdapter('dids')
+    const identifiers = await this.getDb()
     return await identifiers.delete(did)
 
     /*
@@ -97,8 +100,8 @@ export class DIDStore extends AbstractDIDStore {
     return false*/
   }
 
-  async import(args: IIdentifier) {
-    throw new Error("Import not supported")
+  async import(args: IIdentifier): Promise<boolean> {
+    throw new Error('not_supported: Import not supported')
     /*
     const oldTree = deserialize(serialize(this.cacheTree, { lossy: true }))
     this.cacheTree.dids[args.did] = args
@@ -141,7 +144,7 @@ export class DIDStore extends AbstractDIDStore {
       })
     }
 
-    const dids = await this.agent.getDataStoreAdapter('dids')
+    const dids = await this.getDb()
     const results = <IIdentifier[]> await dids.getMany(<FindArgs<TIdentifiersColumns>> {
       where
     })

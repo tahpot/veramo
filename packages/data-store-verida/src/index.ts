@@ -9,14 +9,11 @@
  * @packageDocumentation
  */
 
-export { DataStore } from './data-store'
+export { DataStoreVerida } from './data-store'
 export {
-  DiffCallback,
   ClaimTableEntry,
   CredentialTableEntry,
   PresentationTableEntry,
-  VeramoJsonCache,
-  VeramoJsonStore,
 } from './types'
 export { DIDStore } from './identifier/did-store'
 export { KeyStore } from './identifier/key-store'

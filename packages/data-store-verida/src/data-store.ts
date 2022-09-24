@@ -24,18 +24,18 @@ import {
   UniqueVerifiablePresentation,
   VerifiableCredential,
   VerifiablePresentation,
+  Order,
+  Where
 } from '@veramo/core'
 import { asArray, computeEntryHash, extractIssuer } from '@veramo/utils'
 import { serialize, deserialize } from '@ungap/structured-clone'
 import {
   ClaimTableEntry,
   CredentialTableEntry,
-  DiffCallback,
   PresentationTableEntry,
-  VeramoJsonCache,
-  VeramoJsonStore,
 } from './types'
 import { normalizeCredential } from 'did-jwt-vc'
+import { Context, Database } from '@verida/client-ts'
 
 //type LocalRecords = Required<Pick<VeramoJsonCache, 'dids' | 'credentials' | 'presentations' | 'claims' | 'messages'>>
 
@@ -57,15 +57,14 @@ export interface IDataStoreAdapter {
 
   delete(id: string): Promise<boolean>
 
-  getMany(args: FindArgs<PossibleColumns>): Promise<object[]>
+  getMany(args?: FindArgs<PossibleColumns>): Promise<object[]>
 
 }
 
 export class VeridaDataStoreAdapter implements IDataStoreAdapter {
 
-  private database: VeridaDatabase
-
-  constructor(database: VeridaDatabase) {
+  private database: Database
+  constructor(database: Database) {
     this.database = database
   }
 
@@ -88,19 +87,86 @@ export class VeridaDataStoreAdapter implements IDataStoreAdapter {
     return this.database.delete(id)
   }
 
-  public async getMany(args: FindArgs<PossibleColumns>): Promise<object[]> {
-    throw new Error('getMany() not implemented')
-  }
+  public async getMany(args?: FindArgs<PossibleColumns>): Promise<object[]> {
+    const options: any = {}
 
+    // built the query filter
+    const filter: any = {}
+    args?.where?.forEach((item: Where<PossibleColumns>) => {
+      let param = item.not ? '$n' : '$'
+      switch (item.op) {
+        case 'LessThan':
+          param += 'lt'
+          break
+        case 'LessThan':
+          param += 'lte'
+          break
+        case 'MoreThan':
+          param += 'gt'
+          break
+        case 'MoreThanOrEqual':
+          param += 'gte'
+          break
+        case 'Equal':
+          param += 'eq'
+          break
+        case 'Like':
+          // @todo
+          param += 'like'
+          break
+        case 'Between':
+          // @todo
+          param += 'between'
+          break
+        case 'In':
+          param += 'in'
+          break
+        case 'Any':
+          // @todo
+          param += 'any'
+          break
+        case 'IsNull':
+          // @todo
+          param += 'empty'
+          break
+      }
+
+      const entry: any = {}
+      entry[param] = item.value
+
+      filter[item.column] = entry
+    })
+
+    // handle result order
+    if (args!.order) {
+      const order: any = {}
+      args!.order.forEach((item: Order<PossibleColumns>) => {
+        order[item.column] = item.direction == 'ASC' ? 1 : -1
+      })
+
+      options.order = order
+    }
+
+    // limit results
+    if (args?.take) {
+      options.limit = args.take
+    }
+
+    // skip results
+    // @todo: test this
+    if (args?.skip) {
+      options.offset = args.skip
+    }
+
+    return this.database.getMany(filter, options)
+  }
 }
 
 /**
- * A `MockAgent` class representing proposed additions to the exiting `Agent`
- * class to support fetching the underlying datastore engine used to store data.
  */
-export class MockAgent {
+export class DbManager {
 
-  private veridaContext: VeridaContext
+  private veridaContext: Context
   private dataAdapters: Record<string, IDataStoreAdapter>
 
   /**
@@ -111,7 +177,7 @@ export class MockAgent {
    * 
    * @param context 
    */
-  constructor(context: VeridaContext) {
+  constructor(context: Context) {
     this.veridaContext = context
 
     // Map Veramo datastore names to Verida database names
@@ -124,14 +190,13 @@ export class MockAgent {
     }
   }
 
-  public async getDataStoreAdapter(type: 'dids' | 'credentials' | 'presentations' | 'claims' | 'messages') {
+  public async getDataStoreAdapter(type: 'dids' | 'credentials' | 'presentations' | 'claims' | 'messages' | 'keys' | 'privateKeys') {
     switch (type) {
       case 'dids':
         // In the future this could be something like
         // return this.getDIDStore().getStorageEngine()
         return await this.dataAdapters.dids
       default:
-        // In the future, would have a `case` for each datastore type
         return await this.dataAdapters[type]
     }
   }
@@ -150,17 +215,17 @@ export class MockAgent {
  *
  * @beta This API may change without a BREAKING CHANGE notice.
  */
-export class DataStore implements IAgentPlugin {
+export class DataStoreVerida implements IAgentPlugin {
   readonly methods: IDataStore & IDataStoreORM
   readonly schema = { ...schema.IDataStore, ...schema.IDataStoreORM }
 
-  private agent: MockAgent
+  private dbManager: DbManager
 
   /**
-   * @param agent
+   * @param context Context
    */
-  constructor(agent: MockAgent) {
-    this.agent = agent
+  constructor(context: Context) {
+    this.dbManager = new DbManager(context)
 
     this.methods = {
       // IDataStore methods
@@ -195,7 +260,7 @@ export class DataStore implements IAgentPlugin {
     const id = args.message?.id || computeEntryHash(args.message)
     const message = { ...args.message, id }
 
-    const messages = await this.agent.getDataStoreAdapter('messages')
+    const messages = await this.dbManager.getDataStoreAdapter('messages')
     await messages.save(id, message)
 
     // TODO: deprecate automatic credential and presentation saving
@@ -209,7 +274,7 @@ export class DataStore implements IAgentPlugin {
     }
 
     // adding dummy DIDs is required to make `dataStoreORMGetIdentifiers` work
-    const dids = await this.agent.getDataStoreAdapter('dids')
+    const dids = await this.dbManager.getDataStoreAdapter('dids')
     if (message?.from) {
       await dids.saveIfNotExist(message.from, { did: message.from, provider: '', keys: [], services: [] })
     }
@@ -222,7 +287,7 @@ export class DataStore implements IAgentPlugin {
   }
 
   async dataStoreGetMessage(args: IDataStoreGetMessageArgs): Promise<IMessage> {
-    const messages = await this.agent.getDataStoreAdapter('messages')
+    const messages = await this.dbManager.getDataStoreAdapter('messages')
     const message = <IMessage> await messages.get(args.id)
 
     if (message) {
@@ -294,16 +359,16 @@ export class DataStore implements IAgentPlugin {
       }
     }
 
-    const credentials = await this.agent.getDataStoreAdapter('credentials')
+    const credentials = await this.dbManager.getDataStoreAdapter('credentials')
     await credentials.save(hash, credential)
 
-    const claimsDb = await this.agent.getDataStoreAdapter('claims')
+    const claimsDb = await this.dbManager.getDataStoreAdapter('claims')
     for (const claim of claims) {
       await claimsDb.save(claim.hash, claim)
     }
 
     // adding dummy DIDs is required to make `dataStoreORMGetIdentifiers` work
-    const dids = await this.agent.getDataStoreAdapter('dids')
+    const dids = await this.dbManager.getDataStoreAdapter('dids')
     if (issuer) {
       await dids.saveIfNotExist(issuer, { did: issuer, provider: '', keys: [], services: [] })
     }
@@ -320,7 +385,7 @@ export class DataStore implements IAgentPlugin {
   async dataStoreDeleteVerifiableCredential(
     args: IDataStoreDeleteVerifiableCredentialArgs,
   ): Promise<boolean> {
-    const credentials = await this.agent.getDataStoreAdapter('credentials')
+    const credentials = await this.dbManager.getDataStoreAdapter('credentials')
 
     const credential = await credentials.get(args.hash)
     if (credential) {
@@ -344,7 +409,7 @@ export class DataStore implements IAgentPlugin {
   async dataStoreGetVerifiableCredential(
     args: IDataStoreGetVerifiableCredentialArgs,
   ): Promise<VerifiableCredential> {
-    const credentials = await this.agent.getDataStoreAdapter('credentials')
+    const credentials = await this.dbManager.getDataStoreAdapter('credentials')
     const credentialEntity = <CredentialTableEntry> await credentials.get(args.hash)
     if (credentialEntity) {
       const { parsedCredential } = credentialEntity
@@ -400,7 +465,7 @@ export class DataStore implements IAgentPlugin {
       credentials,
     }
 
-    const presentations = await this.agent.getDataStoreAdapter('presentations')
+    const presentations = await this.dbManager.getDataStoreAdapter('presentations')
     await presentations.save(hash, presentation)
 
     for (const verifiableCredential of credentials) {
@@ -408,7 +473,7 @@ export class DataStore implements IAgentPlugin {
     }
 
     // adding dummy DIDs is required to make `dataStoreORMGetIdentifiers` work
-    const dids = await this.agent.getDataStoreAdapter('dids')
+    const dids = await this.dbManager.getDataStoreAdapter('dids')
     if (holder) {
       await dids.saveIfNotExist(holder, { did: holder, provider: '', keys: [], services: [] })
     }
@@ -425,7 +490,7 @@ export class DataStore implements IAgentPlugin {
   async dataStoreGetVerifiablePresentation(
     args: IDataStoreGetVerifiablePresentationArgs,
   ): Promise<VerifiablePresentation> {
-    const presentations = await this.agent.getDataStoreAdapter('presentations')
+    const presentations = await this.dbManager.getDataStoreAdapter('presentations')
     const presentationEntry = <PresentationTableEntry> await presentations.get(args.hash)
     if (presentationEntry) {
       const { parsedPresentation } = presentationEntry
@@ -449,7 +514,7 @@ export class DataStore implements IAgentPlugin {
       op: 'Equal'
     })
 
-    const dids = await this.agent.getDataStoreAdapter('dids')
+    const dids = await this.dbManager.getDataStoreAdapter('dids')
     const identifiers = <IIdentifier[]> await dids.getMany(args)
 
     /*const identifiers = buildQuery(Object.values(this.cacheTree.dids), args, ['did'], context.authorizedDID)
@@ -482,7 +547,7 @@ export class DataStore implements IAgentPlugin {
       op: 'Equal'
     })
 
-    const dids = await this.agent.getDataStoreAdapter('dids')
+    const dids = await this.dbManager.getDataStoreAdapter('dids')
     const toMessages = <IMessage[]> await dids.getMany(args)
 
     args.where?.pop()
@@ -528,7 +593,7 @@ export class DataStore implements IAgentPlugin {
       op: 'Equal'
     })
 
-    const claims = await this.agent.getDataStoreAdapter('claims')
+    const claims = await this.dbManager.getDataStoreAdapter('claims')
     const issuerClaims = <ClaimTableEntry[]> await claims.getMany(args)
 
     args.where?.pop()
@@ -550,7 +615,7 @@ export class DataStore implements IAgentPlugin {
     )*/
 
     let filteredCredentials = new Set<CredentialTableEntry>()
-    const credentials = await this.agent.getDataStoreAdapter('credentials')
+    const credentials = await this.dbManager.getDataStoreAdapter('credentials')
     filteredClaims.forEach(async (claim) => {
       const credential = <CredentialTableEntry> await credentials.get(claim.credentialHash)
       filteredCredentials.add(credential)
@@ -590,7 +655,7 @@ export class DataStore implements IAgentPlugin {
       op: 'Equal'
     })
 
-    const credentialsDb = await this.agent.getDataStoreAdapter('credentials')
+    const credentialsDb = await this.dbManager.getDataStoreAdapter('credentials')
     const issuerCredentials = <CredentialTableEntry[]> await credentialsDb.getMany(args)
 
     args.where?.pop()
@@ -645,7 +710,7 @@ export class DataStore implements IAgentPlugin {
       op: 'Equal'
     })
 
-    const presentationsDb = await this.agent.getDataStoreAdapter('presentations')
+    const presentationsDb = await this.dbManager.getDataStoreAdapter('presentations')
     const holderPresentations = <PresentationTableEntry[]> await presentationsDb.getMany(args)
 
     args.where?.pop()
