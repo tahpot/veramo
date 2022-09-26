@@ -146,11 +146,11 @@ export class VeridaDataStoreAdapter implements IDataStoreAdapter {
           param += 'eq'
           break
         case 'Like':
-          // @todo: What is logic?
+          // @todo: What is logic? Use regex?
           param += 'like'
           break
         case 'Between':
-          // @todo: What is logic?
+          // @todo: What is logic? gte or gt?
           param += 'between'
           break
         case 'In':
@@ -161,7 +161,7 @@ export class VeridaDataStoreAdapter implements IDataStoreAdapter {
           param += 'any'
           break
         case 'IsNull':
-          // @todo: What is logic?
+          // @todo
           param += 'empty'
           break
       }
