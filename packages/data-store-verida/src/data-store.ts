@@ -37,11 +37,13 @@ import {
 import { normalizeCredential } from 'did-jwt-vc'
 import { Context, Database } from '@verida/client-ts'
 
-//type LocalRecords = Required<Pick<VeramoJsonCache, 'dids' | 'credentials' | 'presentations' | 'claims' | 'messages'>>
-
 /**
  * A generic data store adapter that must implement the ability to insert, update, delete and query
  * a data store.
+ * 
+ * In theory the existing TypeORM could be mapped to this basic interface.
+ * 
+ * I alternatively explored mapping Verida to TypeORM, but that was non-trivial.
  */
 export interface IDataStoreAdapter {
 
@@ -61,6 +63,9 @@ export interface IDataStoreAdapter {
 
 }
 
+/**
+ * A Verida specific implementation of the DataStoreAdapter Interface
+ */
 export class VeridaDataStoreAdapter implements IDataStoreAdapter {
 
   private database: Database
@@ -109,6 +114,14 @@ export class VeridaDataStoreAdapter implements IDataStoreAdapter {
     return await this.database.delete(id)
   }
 
+  /**
+   * @todo: I need some clarification of the exact logic of some of these operators
+   * 
+   * @todo: Requires solid tests
+   * 
+   * @param args 
+   * @returns 
+   */
   public async getMany(args?: FindArgs<PossibleColumns>): Promise<object[]> {
     const options: any = {}
 
@@ -133,22 +146,22 @@ export class VeridaDataStoreAdapter implements IDataStoreAdapter {
           param += 'eq'
           break
         case 'Like':
-          // @todo
+          // @todo: What is logic?
           param += 'like'
           break
         case 'Between':
-          // @todo
+          // @todo: What is logic?
           param += 'between'
           break
         case 'In':
           param += 'in'
           break
         case 'Any':
-          // @todo
+          // @todo: What is logic?
           param += 'any'
           break
         case 'IsNull':
-          // @todo
+          // @todo: What is logic?
           param += 'empty'
           break
       }
@@ -185,6 +198,13 @@ export class VeridaDataStoreAdapter implements IDataStoreAdapter {
 }
 
 /**
+ * A Singleton Database Manager class that maintains open connections to any necessary databases.
+ * 
+ * This should be implemented as an Agent plugin.
+ * 
+ * It may be possible to refactor the Veramo storage so each plugin (DIDStore, KeyStore) etc accepts
+ * a IDataStoreAdapter instance. However given the need for DataStore to generate data in different
+ * databases, I suspect that may not work well?
  */
 export class DbManager {
 
@@ -234,14 +254,10 @@ export class DbManager {
 
 /**
  * A Veramo agent storage plugin that implements the {@link @veramo/core#IDataStore | IDataStore} and
- * {@link @veramo/core#IDataStoreORM | IDataStoreORM} methods using one big JSON object as a backend.
+ * {@link @veramo/core#IDataStoreORM | IDataStoreORM} methods using approriate decentralized Verida databases.
  *
- * Each update operation triggers a callback that can be used to either save the latest state of the agent data or
- * compute a diff and log only the changes.
- *
- * This plugin must be initialized with a {@link VeramoJsonStore}, which serves as the JSON object storing data in
- * memory as well as providing an update notification callback to persist this data.
- * The JSON object can be pre-populated with data from previous sessions.
+ * This plugin must be initialized with a Verida Context, that is connected and authenticated with the
+ * Verida storage network.
  *
  * @beta This API may change without a BREAKING CHANGE notice.
  */
