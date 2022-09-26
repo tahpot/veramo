@@ -53,7 +53,7 @@ export interface IDataStoreAdapter {
 
   saveIfNotExist(id: string, jsonData: Record<any, any>): Promise<boolean>
 
-  get(id: string): Promise<object>
+  get(id: string): Promise<object | undefined>
 
   delete(id: string): Promise<boolean>
 
@@ -70,21 +70,43 @@ export class VeridaDataStoreAdapter implements IDataStoreAdapter {
 
   public async save(id: string, jsonData: Record<any, any>): Promise<boolean> {
     jsonData._id = id
-    return this.database.save(jsonData)
+    try {
+      return await this.database.save(jsonData)
+    } catch (err) {
+      if (err.name == 'conflict') {
+        // record existed
+        return false
+      }
+
+      // unknown error (log somewhere?)
+      console.error(err)
+      return false
+    }
   }
 
   public async saveIfNotExist(id: string, jsonData: Record<any, any>): Promise<boolean> {
     jsonData._id = id
-    // @todo: Ensure record doesn't exist
-    return this.database.save(jsonData)
+    
+    try {
+      await this.get(id)
+    } catch (err: any) {
+      if (err.name == 'not_found') {
+        await this.database.save(jsonData)
+        return true
+      }
+
+      throw err
+    }
+
+    return false
   }
 
-  public async get(id: string): Promise<object> {
-    return this.database.get(id)
+  public async get(id: string): Promise<object | undefined> {
+    return await this.database.get(id)
   }
 
   public async delete(id: string): Promise<boolean> {
-    return this.database.delete(id)
+    return await this.database.delete(id)
   }
 
   public async getMany(args?: FindArgs<PossibleColumns>): Promise<object[]> {
@@ -158,7 +180,7 @@ export class VeridaDataStoreAdapter implements IDataStoreAdapter {
       options.offset = args.skip
     }
 
-    return this.database.getMany(filter, options)
+    return await this.database.getMany(filter, options)
   }
 }
 
@@ -167,7 +189,7 @@ export class VeridaDataStoreAdapter implements IDataStoreAdapter {
 export class DbManager {
 
   private veridaContext: Context
-  private dataAdapters: Record<string, IDataStoreAdapter>
+  private dataAdapters?: Record<string, IDataStoreAdapter>
 
   /**
    * For now, accept a single verida storage context for all storage.
@@ -179,25 +201,33 @@ export class DbManager {
    */
   constructor(context: Context) {
     this.veridaContext = context
+  }
+
+  private async init() {
+    if (this.dataAdapters) {
+      return
+    }
 
     // Map Veramo datastore names to Verida database names
     this.dataAdapters = {
-      dids: new VeridaDataStoreAdapter(context.openDatabase('veramo_dids')),
-      credentials: new VeridaDataStoreAdapter(context.openDatabase('veramo_credentials')),
-      presentations: new VeridaDataStoreAdapter(context.openDatabase('veramo_presentations')),
-      claims: new VeridaDataStoreAdapter(context.openDatabase('veramo_claims')),
-      messages: new VeridaDataStoreAdapter(context.openDatabase('veramo_messages'))
+      dids: new VeridaDataStoreAdapter(await this.veridaContext.openDatabase('veramo_dids')),
+      credentials: new VeridaDataStoreAdapter(await this.veridaContext.openDatabase('veramo_credentials')),
+      presentations: new VeridaDataStoreAdapter(await this.veridaContext.openDatabase('veramo_presentations')),
+      claims: new VeridaDataStoreAdapter(await this.veridaContext.openDatabase('veramo_claims')),
+      messages: new VeridaDataStoreAdapter(await this.veridaContext.openDatabase('veramo_messages'))
     }
   }
 
   public async getDataStoreAdapter(type: 'dids' | 'credentials' | 'presentations' | 'claims' | 'messages' | 'keys' | 'privateKeys') {
+    await this.init()
+
     switch (type) {
       case 'dids':
         // In the future this could be something like
         // return this.getDIDStore().getStorageEngine()
-        return await this.dataAdapters.dids
+        return await this.dataAdapters!.dids
       default:
-        return await this.dataAdapters[type]
+        return await this.dataAdapters![type]
     }
   }
 }
